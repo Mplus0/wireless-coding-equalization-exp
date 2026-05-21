@@ -48,8 +48,9 @@ def hamming74_encode(bits):
     if not np.all((bits == 0) | (bits == 1)):
         raise ValueError('bits 只能包含 0 或 1')
 
-    # TODO: 将 bits reshape 为 (-1, 4)，再与 HAMMING_G 相乘并对 2 取模。
-    raise NotImplementedError('请实现 Hamming(7,4) 编码')
+    reshaped = bits.reshape(-1, 4)
+    encoded = (reshaped @ HAMMING_G) % 2
+    return encoded.flatten()
 
 
 def hamming74_syndrome(codewords):
@@ -70,8 +71,7 @@ def hamming74_syndrome(codewords):
     if codewords.shape[1] != 7:
         raise ValueError('每个 Hamming(7,4) 码字长度必须为 7')
 
-    # TODO: 计算 s = r H^T mod 2。
-    raise NotImplementedError('请实现伴随式计算')
+    return (codewords @ HAMMING_H.T) % 2
 
 
 def hamming74_decode(received):
@@ -94,8 +94,16 @@ def hamming74_decode(received):
     if received.ndim != 1 or len(received) % 7 != 0:
         raise ValueError('received 必须是一维数组，长度为 7 的倍数')
 
-    # TODO: 使用 hamming74_syndrome 完成单比特纠错，并返回前 4 个信息位。
-    raise NotImplementedError('请实现 Hamming(7,4) 译码')
+    codewords = received.reshape(-1, 7)
+    syndromes = hamming74_syndrome(codewords)
+    corrected = codewords.copy()
+    for i, syndrome in enumerate(syndromes):
+        if np.any(syndrome):
+            for col in range(7):
+                if np.array_equal(syndrome, HAMMING_H[:, col]):
+                    corrected[i, col] ^= 1
+                    break
+    return corrected[:, :4].flatten()
 
 
 def convolutional_encode(bits):
@@ -108,8 +116,16 @@ def convolutional_encode(bits):
     if not np.all((bits == 0) | (bits == 1)):
         raise ValueError('bits 只能包含 0 或 1')
 
-    # TODO: 选做任务，可参考课件第6章卷积码部分。
-    raise NotImplementedError('选做：请实现卷积码编码')
+    bits_padded = np.append(bits, [0, 0])
+    s1, s2 = 0, 0
+    encoded = []
+    for u in bits_padded:
+        u = int(u)
+        out1 = (u ^ s1 ^ s2) & 1
+        out2 = (u ^ s2) & 1
+        encoded.extend([out1, out2])
+        s1, s2 = u, s1
+    return np.array(encoded, dtype=int)
 
 
 def viterbi_decode_hard(received_bits):
@@ -120,8 +136,55 @@ def viterbi_decode_hard(received_bits):
     if len(received_bits) % 2 != 0:
         raise ValueError('卷积码接收序列长度必须是 2 的倍数')
 
-    # TODO: 选做任务，可使用汉明距离作为路径度量。
-    raise NotImplementedError('选做：请实现 Viterbi 硬判决译码')
+    num_pairs = len(received_bits) // 2
+    n_states = 4
+
+    trellis_next = np.zeros((n_states, 2), dtype=int)
+    trellis_out = np.zeros((n_states, 2, 2), dtype=int)
+    for state in range(n_states):
+        s1 = (state >> 1) & 1
+        s2 = state & 1
+        for u in (0, 1):
+            trellis_next[state, u] = (u << 1) | s1
+            trellis_out[state, u, 0] = u ^ s1 ^ s2
+            trellis_out[state, u, 1] = u ^ s2
+
+    path_metrics = np.full(n_states, np.inf)
+    path_metrics[0] = 0.0
+    survivors = []
+
+    for step in range(num_pairs):
+        r = received_bits[2 * step : 2 * step + 2]
+        new_metrics = np.full(n_states, np.inf)
+        new_survivor = -np.ones((n_states, 2), dtype=int)
+
+        for prev_state in range(n_states):
+            if np.isinf(path_metrics[prev_state]):
+                continue
+            for u in (0, 1):
+                next_state = trellis_next[prev_state, u]
+                expected = trellis_out[prev_state, u]
+                branch = int(expected[0] != r[0]) + int(expected[1] != r[1])
+                metric = path_metrics[prev_state] + branch
+                if metric < new_metrics[next_state]:
+                    new_metrics[next_state] = metric
+                    new_survivor[next_state, 0] = prev_state
+                    new_survivor[next_state, 1] = u
+
+        path_metrics = new_metrics
+        survivors.append(new_survivor)
+
+    best_state = int(np.argmin(path_metrics))
+    decoded = []
+    state = best_state
+    for step in range(num_pairs - 1, -1, -1):
+        prev_state = survivors[step][state, 0]
+        u = survivors[step][state, 1]
+        decoded.append(u)
+        state = prev_state
+
+    decoded.reverse()
+    return np.array(decoded[:-2], dtype=int)
 
 
 def run_coding_demo():
